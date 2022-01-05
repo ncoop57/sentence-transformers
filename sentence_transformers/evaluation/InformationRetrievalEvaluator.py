@@ -24,6 +24,7 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
                  queries: Dict[str, str],  #qid => query
                  corpus: Dict[str, str],  #cid => doc
                  relevant_docs: Dict[str, Set[str]],  #qid => Set[cid]
+                 relevancies: Dict[str, int],  #cid => int relevancy score
                  corpus_chunk_size: int = 50000,
                  mrr_at_k: List[int] = [10],
                  ndcg_at_k: List[int] = [10],
@@ -49,6 +50,7 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
         self.corpus = [corpus[cid] for cid in self.corpus_ids]
 
         self.relevant_docs = relevant_docs
+        self.relevancies = relevancies
         self.corpus_chunk_size = corpus_chunk_size
         self.mrr_at_k = mrr_at_k
         self.ndcg_at_k = ndcg_at_k
@@ -229,8 +231,8 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
 
             # NDCG@k
             for k_val in self.ndcg_at_k:
-                predicted_relevance = [1 if top_hit['corpus_id'] in query_relevant_docs else 0 for top_hit in top_hits[0:k_val]]
-                true_relevances = [1] * len(query_relevant_docs)
+                predicted_relevance = [self.relevancies[top_hit['corpus_id']] for top_hit in top_hits[0:k_val]]
+                true_relevances = sorted(predicted_relevance, reverse=True) # optimal ranking of relevant documents is sorted by their relevancy
 
                 ndcg_value = self.compute_dcg_at_k(predicted_relevance, k_val) / self.compute_dcg_at_k(true_relevances, k_val)
                 ndcg[k_val].append(ndcg_value)
