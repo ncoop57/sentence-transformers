@@ -4,7 +4,7 @@ from torch import nn
 from typing import Dict
 import os
 import json
-
+from sentence_transformers.models.PerceiverPooling import PerceiverResampler
 
 class Pooling(nn.Module):
     """Performs pooling (max or mean) on the token embeddings.
@@ -14,13 +14,14 @@ class Pooling(nn.Module):
     together.
 
     :param word_embedding_dimension: Dimensions for the word embeddings
-    :param pooling_mode: Either "cls", "lasttoken", "max", "mean", "mean_sqrt_len_tokens", or "weightedmean". If set, overwrites the other pooling_mode_* settings
+    :param pooling_mode: Either "cls", "lasttoken", "max", "mean", "mean_sqrt_len_tokens", "weightedmean", or "perceiver". If set, overwrites the other pooling_mode_* settings
     :param pooling_mode_cls_token: Use the first token (CLS token) as text representations
     :param pooling_mode_max_tokens: Use max in each dimension over all tokens.
     :param pooling_mode_mean_tokens: Perform mean-pooling
     :param pooling_mode_mean_sqrt_len_tokens: Perform mean-pooling, but divide by sqrt(input_length).
     :param pooling_mode_weightedmean_tokens: Perform (position) weighted mean pooling. See `SGPT: GPT Sentence Embeddings for Semantic Search <https://arxiv.org/abs/2202.08904>`_.
     :param pooling_mode_lasttoken: Perform last token pooling. See `SGPT: GPT Sentence Embeddings for Semantic Search <https://arxiv.org/abs/2202.08904>`_ and `Text and Code Embeddings by Contrastive Pre-Training <https://arxiv.org/abs/2201.10005>`_.
+    :param pooling_mode_perceiver: Perform perceiver resampling on the token embeddings. See `Perceiver IO: A General Architecture for Structured Inputs & Outputs <https://arxiv.org/abs/2107.14795>`_.
     """
 
     POOLING_MODES = (
@@ -42,6 +43,7 @@ class Pooling(nn.Module):
         pooling_mode_mean_sqrt_len_tokens: bool = False,
         pooling_mode_weightedmean_tokens: bool = False,
         pooling_mode_lasttoken: bool = False,
+        pooling_mode_perceiver: bool = False,
         include_prompt=True,
     ) -> None:
         super(Pooling, self).__init__()
@@ -54,6 +56,7 @@ class Pooling(nn.Module):
             "pooling_mode_mean_sqrt_len_tokens",
             "pooling_mode_weightedmean_tokens",
             "pooling_mode_lasttoken",
+            "pooling_mode_perceiver",
             "include_prompt",
         ]
 
@@ -71,6 +74,7 @@ class Pooling(nn.Module):
             pooling_mode_mean_sqrt_len_tokens = pooling_mode == "mean_sqrt_len_tokens"
             pooling_mode_weightedmean_tokens = pooling_mode == "weightedmean"
             pooling_mode_lasttoken = pooling_mode == "lasttoken"
+            pooling_mode_perceiver = pooling_mode == "perceiver"
 
         self.word_embedding_dimension = word_embedding_dimension
         self.pooling_mode_cls_token = pooling_mode_cls_token
@@ -79,6 +83,13 @@ class Pooling(nn.Module):
         self.pooling_mode_mean_sqrt_len_tokens = pooling_mode_mean_sqrt_len_tokens
         self.pooling_mode_weightedmean_tokens = pooling_mode_weightedmean_tokens
         self.pooling_mode_lasttoken = pooling_mode_lasttoken
+        self.pooling_mode_perceiver = pooling_mode_perceiver
+        if self.pooling_mode_perceiver:
+            self.perceiver_resampler = PerceiverResampler(
+                dim = word_embedding_dimension,
+                depth = 4,
+                num_latents=1,
+            )
 
         self.include_prompt = include_prompt
 
@@ -90,6 +101,7 @@ class Pooling(nn.Module):
                 pooling_mode_mean_sqrt_len_tokens,
                 pooling_mode_weightedmean_tokens,
                 pooling_mode_lasttoken,
+                pooling_mode_perceiver,
             ]
         )
         self.pooling_output_dimension = pooling_mode_multiplier * word_embedding_dimension
@@ -114,6 +126,8 @@ class Pooling(nn.Module):
             modes.append("weightedmean")
         if self.pooling_mode_lasttoken:
             modes.append("lasttoken")
+        if self.pooling_mode_perceiver:
+            modes.append("perceiver")
 
         return "+".join(modes)
 
@@ -207,6 +221,8 @@ class Pooling(nn.Module):
             )
             embedding = torch.gather(token_embeddings * input_mask_expanded, 1, gather_indices).squeeze(dim=1)
             output_vectors.append(embedding)
+        if self.pooling_mode_perceiver:
+            output_vectors.append(self.perceiver_resampler(token_embeddings))
 
         output_vector = torch.cat(output_vectors, 1)
         features.update({"sentence_embedding": output_vector})
