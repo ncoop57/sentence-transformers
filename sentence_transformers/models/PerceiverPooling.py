@@ -1,4 +1,4 @@
-# Code from: https://github.com/lucidrains/flamingo-pytorch/blob/main/flamingo_pytorch/flamingo_pytorch.py
+# Code slightly modified from: https://github.com/lucidrains/flamingo-pytorch/blob/main/flamingo_pytorch/flamingo_pytorch.py
 
 import torch
 from torch import nn, einsum
@@ -24,7 +24,7 @@ class PerceiverAttention(nn.Module):
         heads = 8
     ):
         super().__init__()
-        self.scale = dim_head ** -0.5
+        self.scale = dim_head ** -0.5 # why -0.5?
         self.heads = heads
         inner_dim = dim_head * heads
 
@@ -39,14 +39,13 @@ class PerceiverAttention(nn.Module):
         """
         einstein notation
         b - batch
-        t - time
         n - sequence
         d - dimension
         """
         x = self.norm_embds(x)
         latents = self.norm_latents(latents)
 
-        b, m, h = *x.shape[:2], self.heads
+        # b, m, h = *x.shape[:2], self.heads
 
         q = self.to_q(latents)
 
@@ -54,7 +53,7 @@ class PerceiverAttention(nn.Module):
         kv_input = torch.cat((x, latents), dim = -2)
         k, v = self.to_kv(kv_input).chunk(2, dim = -1)
 
-        q, k, v = rearrange_many((q, k, v), 'b t n (h d) -> b h t n d', h = h)
+        q, k, v = rearrange_many((q, k, v), 'b n (h d) -> b h n d', h = self.heads)
 
         q = q * self.scale
 
@@ -66,7 +65,7 @@ class PerceiverAttention(nn.Module):
         attn = sim.softmax(dim = -1)
 
         out = einsum('... i j, ... j d -> ... i d', attn, v)
-        out = rearrange(out, 'b h t n d -> b t n (h d)', h = h)
+        out = rearrange(out, 'b h n d -> b n (h d)', h = self.heads)
         return self.to_out(out)
 
 class PerceiverResampler(nn.Module):
@@ -77,13 +76,11 @@ class PerceiverResampler(nn.Module):
         depth,
         dim_head = 64,
         heads = 8,
-        num_latents = 64,
-        num_media_embeds = 4,
+        num_latents = 1,
         ff_mult = 4
     ):
         super().__init__()
         self.latents = nn.Parameter(torch.randn(num_latents, dim))
-        self.media_pos_emb = nn.Parameter(torch.randn(num_media_embeds, 1, dim))
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -95,13 +92,13 @@ class PerceiverResampler(nn.Module):
         self.norm = nn.LayerNorm(dim)
 
     def forward(self, x):
-        if x.ndim == 3:
-            x = rearrange(x, 'b n d -> b 1 n d')
-
-        times = x.shape[1]
-        x = x + self.media_pos_emb[:times]
-
-        latents = repeat(self.latents, 'n d -> b m n d', b = x.shape[0], m = x.shape[1])
+        """
+        einstein notation
+        b - batch
+        n - sequence
+        d - dimension
+        """
+        latents = repeat(self.latents, 'n d -> b n d', b = x.shape[0])
 
         for attn, ff in self.layers:
             latents = attn(x, latents) + latents

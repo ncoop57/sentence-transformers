@@ -26,6 +26,8 @@ setup(
         "scipy",
         "huggingface-hub>=0.15.1",
         "Pillow",
+        "einops>=0.4",
+        "einops-exts",
     ],
     extras_require={
         "dev": [
